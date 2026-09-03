@@ -2,7 +2,7 @@ import Foundation
 
 /// An async GraphQL client on top of `URLSession`.
 ///
-/// POST-only. No codegen, subscriptions, or file uploads.
+/// POST-only. No subscriptions.
 ///
 /// ```swift
 /// let client = GraphQLClient(endpoint: URL(string: "https://api.example.com/graphql")!)
@@ -87,10 +87,46 @@ public struct GraphQLClient: @unchecked Sendable {
         )
     }
 
+    /// Mutation with file uploads ([multipart spec](https://github.com/jaydenseric/graphql-multipart-request-spec)).
+    ///
+    /// `files` keys are variable paths (`"file"` or `"files.0"`). Those paths are
+    /// set to JSON `null` in `operations` and mapped to the file parts.
+    public func upload<Variables: Encodable, Response: Decodable>(
+        _ document: String,
+        operationName: String? = nil,
+        variables: Variables,
+        files: [String: GraphQLFile],
+        headers: [String: String] = [:]
+    ) async throws -> Response {
+        try await execute(
+            document,
+            operationName: operationName,
+            variables: variables,
+            files: files,
+            headers: headers
+        )
+    }
+
+    public func upload<Response: Decodable>(
+        _ document: String,
+        operationName: String? = nil,
+        files: [String: GraphQLFile],
+        headers: [String: String] = [:]
+    ) async throws -> Response {
+        try await upload(
+            document,
+            operationName: operationName,
+            variables: EmptyVariables(),
+            files: files,
+            headers: headers
+        )
+    }
+
     private func execute<Variables: Encodable, Response: Decodable>(
         _ document: String,
         operationName: String?,
         variables: Variables?,
+        files: [String: GraphQLFile] = [:],
         headers: [String: String]
     ) async throws -> Response {
         let body = GraphQLRequestBody(
@@ -108,12 +144,61 @@ public struct GraphQLClient: @unchecked Sendable {
 
         var request = URLRequest(url: configuration.endpoint, timeoutInterval: configuration.timeoutInterval)
         request.httpMethod = "POST"
-        request.httpBody = payload
 
+        if files.isEmpty {
+            request.httpBody = payload
+            applyHeaders(headers, contentType: "application/json", to: &request)
+        } else {
+            let multipart: (Data, String)
+            do {
+                multipart = try makeMultipartBody(operationsJSON: payload, files: files)
+            } catch {
+                throw GraphQLError.encodingFailed
+            }
+            request.httpBody = multipart.0
+            applyHeaders(headers, contentType: multipart.1, to: &request)
+        }
+
+        return try await send(request)
+    }
+
+    private func applyHeaders(_ headers: [String: String], contentType: String, to request: inout URLRequest) {
         var merged = configuration.defaultHeaders
         headers.forEach { merged[$0.key] = $0.value }
+        merged["Content-Type"] = contentType
         merged.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+    }
 
+    private func makeMultipartBody(
+        operationsJSON: Data,
+        files: [String: GraphQLFile]
+    ) throws -> (Data, String) {
+        guard var operations = try JSONSerialization.jsonObject(with: operationsJSON) as? [String: Any] else {
+            throw GraphQLError.encodingFailed
+        }
+        var variables = operations["variables"] as? [String: Any] ?? [:]
+
+        let ordered = files.sorted(by: { $0.key < $1.key })
+        var map: [String: [String]] = [:]
+        for (index, (path, _)) in ordered.enumerated() {
+            JSONPath.setNull(&variables, path: path)
+            map["\(index)"] = ["variables.\(path)"]
+        }
+        operations["variables"] = variables
+
+        let operationsData = try JSONSerialization.data(withJSONObject: operations, options: [.sortedKeys])
+        let mapData = try JSONSerialization.data(withJSONObject: map, options: [.sortedKeys])
+
+        var form = MultipartForm()
+        form.addJSONField(name: "operations", data: operationsData)
+        form.addJSONField(name: "map", data: mapData)
+        for (index, (_, file)) in ordered.enumerated() {
+            form.addFileField(name: "\(index)", file: file)
+        }
+        return (form.finish(), form.contentType)
+    }
+
+    private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {
         let data: Data
         let urlResponse: URLResponse
         do {

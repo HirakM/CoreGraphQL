@@ -13,7 +13,9 @@ let package = Package(
         .visionOS(.v1)
     ],
     products: [
-        .library(name: "CoreGraphQL", targets: ["CoreGraphQL"])
+        .library(name: "CoreGraphQL", targets: ["CoreGraphQL"]),
+        .executable(name: "coregraphql-codegen", targets: ["coregraphql-codegen"]),
+        .plugin(name: "GenerateGraphQL", targets: ["GenerateGraphQL"])
     ],
     targets: [
         .target(
@@ -22,9 +24,37 @@ let package = Package(
                 .enableUpcomingFeature("ExistentialAny")
             ]
         ),
+        .target(
+            name: "CoreGraphQLCodegen",
+            swiftSettings: [
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .executableTarget(
+            name: "coregraphql-codegen",
+            dependencies: ["CoreGraphQLCodegen"],
+            swiftSettings: [
+                .enableUpcomingFeature("ExistentialAny")
+            ]
+        ),
+        .plugin(
+            name: "GenerateGraphQL",
+            capability: .command(
+                intent: .custom(
+                    verb: "generate-graphql",
+                    description: "Generate Swift types from a GraphQL schema"
+                ),
+                permissions: [
+                    .writeToPackageDirectory(reason: "Write generated GraphQL Swift types")
+                ]
+            ),
+            dependencies: [
+                "coregraphql-codegen"
+            ]
+        ),
         .testTarget(
             name: "CoreGraphQLTests",
-            dependencies: ["CoreGraphQL"]
+            dependencies: ["CoreGraphQL", "CoreGraphQLCodegen"]
         )
     ]
 )

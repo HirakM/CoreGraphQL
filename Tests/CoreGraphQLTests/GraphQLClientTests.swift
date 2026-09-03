@@ -17,7 +17,7 @@ private struct UserVariables: Encodable {
 
 @Suite(.serialized)
 struct GraphQLClientTests {
-    private func makeClient() -> GraphQLClient {
+    func makeClient() -> GraphQLClient {
         let sessionConfig = URLSessionConfiguration.ephemeral
         sessionConfig.protocolClasses = [MockURLProtocol.self]
         sessionConfig.timeoutIntervalForRequest = 2
