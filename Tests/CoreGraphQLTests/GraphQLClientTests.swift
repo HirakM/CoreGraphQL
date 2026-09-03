@@ -2,16 +2,16 @@ import Foundation
 import Testing
 @testable import CoreGraphQL
 
-private struct User: Decodable, Equatable {
+struct User: Decodable, Equatable {
     var id: String
     var name: String
 }
 
-private struct UserData: Decodable, Equatable {
+struct UserData: Decodable, Equatable {
     var user: User
 }
 
-private struct UserVariables: Encodable {
+struct UserVariables: Encodable {
     var id: String
 }
 
